@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CADCraft (embedded)</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #22282f; }
+    iframe { border: 0; width: 100%; height: 100%; display: block; }
+  </style>
+</head>
+<body>
+  <iframe id="cad" src="/index.html?host=parent" title="CADCraft"></iframe>
+  <script>
+    (function () {
+      // Relay between a page on ANOTHER origin that embeds this file and CADCraft's own
+      // `?host=parent` postMessage bridge (host.rs), which only trusts a same-origin parent.
+      // The inner frame sees this page as its parent on its own origin; this page forwards
+      // `cadcraft:*` messages between it and the allow-listed outer parent, re-tagging the
+      // target origin each way. No other message type crosses in either direction.
+      var ALLOWED = [
+        'http://localhost:3000', 'http://127.0.0.1:3000',
+        'https://erp.craneye.com', 'https://app.craneye.com', 'https://devapp.craneye.com',
+        'https://craneye-erp-app.pages.dev'
+      ];
+      function allowed(origin) {
+        if (ALLOWED.indexOf(origin) !== -1) return true;
+        return /^https:\/\/[a-z0-9-]+\.craneye-erp-app\.pages\.dev$/.test(origin);
+      }
+      var inner = document.getElementById('cad');
+      var parentOrigin = null;
+      var q = new URLSearchParams(location.search).get('parent');
+      if (q && allowed(q)) parentOrigin = q;
+
+      function toParent(msg, transfer) {
+        if (!parentOrigin || window.parent === window) return;
+        try {
+          window.parent.postMessage(msg, parentOrigin, transfer || []);
+        } catch (e) {
+          console.error('embed: could not post to parent', e);
+        }
+      }
+
+      window.addEventListener('message', function (ev) {
+        var d = ev.data;
+        if (!d || typeof d.type !== 'string' || d.type.indexOf('cadcraft:') !== 0) return;
+
+        if (ev.source === inner.contentWindow && ev.origin === location.origin) {
+          // inner CADCraft → outer parent
+          toParent(d, d.bytes instanceof ArrayBuffer ? [d.bytes] : []);
+          return;
+        }
+
+        if (ev.source === window.parent && allowed(ev.origin)) {
+          // outer parent → inner CADCraft
+          parentOrigin = ev.origin;
+          var bytes = d.bytes;
+          if (bytes && !(bytes instanceof ArrayBuffer) && bytes.buffer instanceof ArrayBuffer) {
+            bytes = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+          }
+          var msg = Object.assign({}, d, bytes ? { bytes: bytes } : {});
+          inner.contentWindow.postMessage(msg, location.origin, bytes instanceof ArrayBuffer ? [bytes] : []);
+        }
+      });
+
+      if (parentOrigin) toParent({ type: 'cadcraft:embed-ready' });
+    })();
+  </script>
+</body>
+</html>
