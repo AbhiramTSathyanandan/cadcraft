@@ -29,6 +29,17 @@ cadcraft-cli mcp --connect 127.0.0.1:7979
 
 Claude Code: `claude mcp add cadcraft -- cadcraft-cli mcp --connect 127.0.0.1:7979`.
 
+## Two browser facts to know
+
+- **A deployed (https) copy needs one click.** Chromium 152+ treats a public site reaching
+  `localhost` as *local network access*: the first time the page opens the socket, the browser
+  shows an "allow access to your local network" prompt and holds the connection until it is
+  answered. Click Allow once per site; a page served from `http://127.0.0.1` needs no prompt.
+- **A hidden tab is slow.** eframe's web loop runs on `requestAnimationFrame`, which browsers
+  pause for hidden or fully covered tabs; the `setTimeout` fallback is throttled to a second or
+  more (down to once a minute after a while). Requests are not lost, only delayed — keep the
+  tab visible while an agent is driving it.
+
 ## What works over the socket
 
 Every method in `docs/control-protocol.md` that the web build can honour: `cmdline.*`,
