@@ -1,0 +1,11 @@
+{
+  "name": "cadcraft-web-control-relay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Loopback relay: cadcraft-cli mcp --connect (TCP JSON lines) <-> the browser build (?control=ws://localhost:PORT)",
+  "type": "module",
+  "bin": { "cadcraft-web-control-relay": "relay.mjs" },
+  "scripts": { "start": "node relay.mjs" },
+  "dependencies": { "ws": "^8.18.0" },
+  "license": "MIT OR Apache-2.0"
+}

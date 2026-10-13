@@ -6,9 +6,15 @@
 //! with egui shapes instead of the GPU canvas, `?sample` opens the sample drawing. Saving downloads
 //! the drawing through the browser (`download.rs`). With `?host=parent` (inside an `<iframe>`), a
 //! same-origin parent page sends the drawing to open and stores what CADCraft saves instead
-//! (`host.rs`).
+//! (`host.rs`). With `?control=ws://localhost:PORT` (or `?control=PORT`) the app takes the desktop
+//! control protocol over a WebSocket to a relay on the user's machine (`control_ws.rs`), so
+//! `cadcraft-cli mcp --connect` can drive the browser build.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+/// Loopback-only `?control=` target parsing (tested natively).
+mod control_target;
+#[cfg(target_arch = "wasm32")]
+mod control_ws;
 #[cfg(target_arch = "wasm32")]
 pub mod download;
 #[cfg(target_arch = "wasm32")]
@@ -23,15 +29,21 @@ mod web {
     const CANVAS_ID: &str = "cadcraft_canvas";
     const LOADING_ID: &str = "cadcraft_loading";
 
-    /// The app, the files File > Open… and drag and drop read for it in the background, and the
-    /// page embedding it (`?host=parent`).
-    struct Shell(CadApp, crate::upload::Inbox, Option<(crate::host::Bridge, crate::host::DirtyReport)>);
+    /// The app, the files File > Open… and drag and drop read for it in the background, the
+    /// page embedding it (`?host=parent`), and the control socket (`?control=`).
+    struct Shell(CadApp, crate::upload::Inbox, Option<(crate::host::Bridge, crate::host::DirtyReport)>, Option<crate::control_ws::Link>);
 
     impl eframe::App for Shell {
         fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
             self.1.take_dropped(ctx);
             self.1.drain(&mut self.0);
+            if let Some(link) = &self.3 {
+                link.queue();
+            }
             self.0.logic(ctx);
+            if let Some(link) = &self.3 {
+                link.flush();
+            }
             if let Some((bridge, reported)) = &self.2 {
                 bridge.report_dirty(&self.0, reported);
             }
@@ -142,7 +154,23 @@ mod web {
                             bridge.post_ready();
                             (bridge, crate::host::DirtyReport::default())
                         });
-                        Ok(Box::new(Shell(app, inbox, host)))
+                        // `?control=`: hand the app the same request queue the desktop control
+                        // server feeds, over a WebSocket to a loopback relay.
+                        let (app, link) = match query_param("control").as_deref().map(crate::control_ws::target) {
+                            Some(Ok(url)) => match crate::control_ws::Link::open(&url, app, cc.egui_ctx.clone()) {
+                                Ok((link, app)) => (app, Some(link)),
+                                Err(e) => {
+                                    log::error!("{e}");
+                                    return Err(e.into());
+                                }
+                            },
+                            Some(Err(e)) => {
+                                log::error!("{e}");
+                                return Err(e.into());
+                            }
+                            None => (app, None),
+                        };
+                        Ok(Box::new(Shell(app, inbox, host, link)))
                     }),
                 )
                 .await;

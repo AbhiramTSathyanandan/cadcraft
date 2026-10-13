@@ -9,3 +9,6 @@
 *.swp
 /apps/cadcraft-web/dist/
 /.claude/worktrees/
+
+# web-control-relay (tools/)
+node_modules/

@@ -83,6 +83,12 @@ impl PendingReply {
         // Started: a reply that arrived just now still counts.
         self.rx.try_recv().unwrap_or_else(|_| json!({"ok": false, "error": "timeout", "state": "may-have-run"}))
     }
+
+    /// The reply if the app has sent it, without waiting. For hosts that run the app on the same
+    /// thread as the transport (the web build), which poll after each frame instead of blocking.
+    pub fn try_take(&self) -> Option<ControlResponse> {
+        self.rx.try_recv().ok()
+    }
 }
 
 pub enum Outcome {
