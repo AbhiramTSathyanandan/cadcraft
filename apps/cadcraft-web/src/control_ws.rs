@@ -106,7 +106,9 @@ impl Link {
         }
     }
 
-    /// After the app's frame logic: answer every request it has finished.
+    /// After each of the app's passes: answer every request it has finished. While a reply is
+    /// still owed, keep the frames coming — egui idles between frames, and a reply that lands
+    /// after the last pass would otherwise wait for the next pointer movement.
     pub fn flush(&self) {
         let mut pending = self.pending.borrow_mut();
         let mut i = 0;
@@ -121,6 +123,9 @@ impl Link {
                 }
                 None => i += 1,
             }
+        }
+        if !pending.is_empty() {
+            self.ctx.request_repaint();
         }
     }
 

@@ -39,6 +39,7 @@ wss.on("connection", (ws, req) => {
   ws.on("message", (data) => {
     for (const line of data.toString().split("\n")) {
       if (!line.trim()) continue;
+      if (process.env.RELAY_DEBUG) console.log("relay: tab → " + line.slice(0, 160));
       let id = null;
       try {
         id = JSON.stringify(JSON.parse(line).id ?? null);
@@ -47,7 +48,10 @@ wss.on("connection", (ws, req) => {
       }
       const client = (id !== null && waiting.get(id)) || waiting.values().next().value;
       if (id !== null) waiting.delete(id);
-      if (client && !client.destroyed) client.write(line + "\n");
+      if (client && !client.destroyed) {
+        client.write(line + "\n");
+        if (client.endWhenAnswered && ![...waiting.values()].some((c) => c === client)) client.end();
+      }
     }
   });
   ws.on("close", () => {
@@ -60,7 +64,9 @@ wss.on("connection", (ws, req) => {
   });
 });
 
-const tcp = net.createServer((socket) => {
+// allowHalfOpen: a client that sends its requests and closes its write side (`nc`, one-shot
+// scripts) still gets its replies; the socket ends once they are written.
+const tcp = net.createServer({ allowHalfOpen: true }, (socket) => {
   console.log("relay: control client connected");
   let buf = "";
   socket.on("data", (chunk) => {
@@ -83,8 +89,15 @@ const tcp = net.createServer((socket) => {
         continue;
       }
       waiting.set(JSON.stringify(msg.id), socket);
+      if (process.env.RELAY_DEBUG) console.log("relay: → tab " + JSON.stringify(msg).slice(0, 160));
       tab.send(JSON.stringify(msg));
     }
+  });
+  socket.on("end", () => {
+    // Write side closed by the peer: finish once nothing is owed to it.
+    const owed = () => [...waiting.values()].some((c) => c === socket);
+    if (!owed()) socket.end();
+    else socket.endWhenAnswered = true;
   });
   socket.on("close", () => {
     for (const [id, client] of waiting) if (client === socket) waiting.delete(id);

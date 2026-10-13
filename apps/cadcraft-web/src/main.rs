@@ -62,6 +62,9 @@ mod web {
         }
         fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
             self.0.ui(ui);
+            if let Some(link) = &self.3 {
+                link.flush();
+            }
             if let Some((bridge, reported)) = &self.2 {
                 bridge.report_dirty(&self.0, reported);
             }
