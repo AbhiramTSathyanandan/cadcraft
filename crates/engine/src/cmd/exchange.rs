@@ -72,18 +72,8 @@ fn extension(path: &str) -> String {
 
 /// Write `bytes` to `path` through a temporary file, so a failed write keeps the old file.
 fn write_file(cmd: &str, path: &str, bytes: &[u8]) -> Result<()> {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let tmp = format!("{path}.cadcraft-tmp");
-        std::fs::write(&tmp, bytes).map_err(|e| bad(cmd, format!("{path}: {e}")))?;
-        std::fs::rename(&tmp, path).map_err(|e| bad(cmd, format!("{path}: {e}")))?;
-        Ok(())
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        let _ = (path, bytes);
-        Err(bad(cmd, "paths are not available on the web; omit `path` to get the file as base64 `data`"))
-    }
+    // On the web the bytes go to the host's delivery hook (a download) like SAVE and EXPORTPDF.
+    super::file::store_file(cmd, path, super::file::mime_for(path), bytes)
 }
 
 // ---------- EXPORT ----------

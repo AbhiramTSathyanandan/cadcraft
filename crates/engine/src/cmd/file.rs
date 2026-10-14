@@ -297,7 +297,7 @@ pub(crate) fn save_to(s: &mut Session, path: &str) -> Result<usize> {
 /// version goes into the drawing's `$ACADVER`, so later saves (QSAVE) write it again.
 fn save_as(s: &mut Session, cmd: &str, path: &str, opts: &SaveAs) -> Result<usize> {
     let bytes = write_bytes(s, cmd, path, opts)?;
-    let n = commit_save(s, path, &bytes, store)?;
+    let n = commit_save(s, path, &bytes, |p, b| store_file("save", p, mime_for(p), b))?;
     if is_drawing_file(path) {
         let st = s.state_mut()?;
         st.binary_dxf = opts.binary;
@@ -313,19 +313,35 @@ fn save_as(s: &mut Session, cmd: &str, path: &str, opts: &SaveAs) -> Result<usiz
 
 /// Put saved bytes where the user gets them: natively the file at `path` (written atomically); on
 /// the web, which has no file system, a browser download named after `path` via [`deliver`].
-fn store(path: &str, bytes: &[u8]) -> Result<()> {
+/// Store `bytes` for `cmd` at `path`: on a file system atomically (temp file + rename); on the
+/// web there is no path, so the bytes go to the host's delivery hook under the file name — a
+/// browser download, or the page embedding CADCraft. Every command that produces a file (SAVE,
+/// EXPORTPDF/PLOT, EXPORT) stores through here, so they all work the same way on the web.
+pub(crate) fn store_file(cmd: &str, path: &str, mime: &str, bytes: &[u8]) -> Result<()> {
     #[cfg(not(target_arch = "wasm32"))]
     {
+        let _ = mime;
         let tmp = format!("{path}.cadcraft-tmp");
-        std::fs::write(&tmp, bytes).map_err(|e| bad("save", format!("{path}: {e}")))?;
-        std::fs::rename(&tmp, path).map_err(|e| bad("save", format!("{path}: {e}")))?;
+        std::fs::write(&tmp, bytes).map_err(|e| bad(cmd, format!("{path}: {e}")))?;
+        std::fs::rename(&tmp, path).map_err(|e| bad(cmd, format!("{path}: {e}")))?;
         Ok(())
     }
     #[cfg(target_arch = "wasm32")]
     {
         let name = file_name(path);
-        let deliver = deliver().ok_or_else(|| bad("save", "saving files is not available in this build; use document.bytes"))?;
-        deliver(&name, "application/octet-stream", bytes).map_err(|e| bad("save", format!("{name}: {e}")))
+        let deliver = deliver().ok_or_else(|| bad(cmd, "saving files is not available in this build; use document.bytes"))?;
+        deliver(&name, mime, bytes).map_err(|e| bad(cmd, format!("{name}: {e}")))
+    }
+}
+
+/// The MIME type a file name implies, for the web delivery hook.
+pub(crate) fn mime_for(path: &str) -> &'static str {
+    let ext = std::path::Path::new(path).extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+    match ext.as_str() {
+        "pdf" => "application/pdf",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        _ => "application/octet-stream",
     }
 }
 
