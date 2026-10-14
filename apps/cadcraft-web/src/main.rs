@@ -8,11 +8,15 @@
 //! same-origin parent page sends the drawing to open and stores what CADCraft saves instead
 //! (`host.rs`). With `?control=ws://localhost:PORT` (or `?control=PORT`) the app takes the desktop
 //! control protocol over a WebSocket to a relay on the user's machine (`control_ws.rs`), so
-//! `cadcraft-cli mcp --connect` can drive the browser build.
+//! `cadcraft-cli mcp --connect` can drive the browser build. The embedding page can send the same
+//! control requests as `cadcraft:command` messages (`host.rs`), so an agent behind the page can
+//! edit the drawing without anything installed on the user's machine.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 /// Loopback-only `?control=` target parsing (tested natively).
 mod control_target;
+#[cfg(target_arch = "wasm32")]
+mod control_link;
 #[cfg(target_arch = "wasm32")]
 mod control_ws;
 #[cfg(target_arch = "wasm32")]
@@ -30,18 +34,19 @@ mod web {
     const LOADING_ID: &str = "cadcraft_loading";
 
     /// The app, the files File > Open… and drag and drop read for it in the background, the
-    /// page embedding it (`?host=parent`), and the control socket (`?control=`).
-    struct Shell(CadApp, crate::upload::Inbox, Option<(crate::host::Bridge, crate::host::DirtyReport)>, Option<crate::control_ws::Link>);
+    /// page embedding it (`?host=parent`), and the control links (`?control=` socket and/or
+    /// the host bridge's `cadcraft:command` channel), all feeding one request queue.
+    struct Shell(CadApp, crate::upload::Inbox, Option<(crate::host::Bridge, crate::host::DirtyReport)>, Vec<crate::control_link::Link>);
 
     impl eframe::App for Shell {
         fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
             self.1.take_dropped(ctx);
             self.1.drain(&mut self.0);
-            if let Some(link) = &self.3 {
+            for link in &self.3 {
                 link.queue();
             }
             self.0.logic(ctx);
-            if let Some(link) = &self.3 {
+            for link in &self.3 {
                 link.flush();
             }
             if let Some((bridge, reported)) = &self.2 {
@@ -62,7 +67,7 @@ mod web {
         }
         fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
             self.0.ui(ui);
-            if let Some(link) = &self.3 {
+            for link in &self.3 {
                 link.flush();
             }
             if let Some((bridge, reported)) = &self.2 {
@@ -152,16 +157,27 @@ mod web {
                             picker.pick();
                             None
                         }));
+                        // One request queue, the same one the desktop control server feeds;
+                        // every transport below clones its sender.
+                        let (tx, rx) = std::sync::mpsc::channel::<cadcraft_ui_egui::ControlRequest>();
+                        let app = app.with_control(rx);
+                        let mut links = Vec::new();
+                        // The embedding page: drawings in, saves out, and control requests
+                        // (`cadcraft:command`) answered as `cadcraft:command-reply`.
                         let host = app_bridge.map(|bridge| {
-                            bridge.listen(inbox.clone());
+                            let reply_to = bridge.clone();
+                            let send: std::rc::Rc<dyn Fn(&serde_json::Value)> =
+                                std::rc::Rc::new(move |reply| reply_to.post_command_reply(reply));
+                            let link = crate::control_link::Link::new(tx.clone(), cc.egui_ctx.clone(), send);
+                            bridge.listen(inbox.clone(), link.clone());
+                            links.push(link);
                             bridge.post_ready();
                             (bridge, crate::host::DirtyReport::default())
                         });
-                        // `?control=`: hand the app the same request queue the desktop control
-                        // server feeds, over a WebSocket to a loopback relay.
-                        let (app, link) = match query_param("control").as_deref().map(crate::control_ws::target) {
-                            Some(Ok(url)) => match crate::control_ws::Link::open(&url, app, cc.egui_ctx.clone()) {
-                                Ok((link, app)) => (app, Some(link)),
+                        // `?control=`: the same requests over a WebSocket to a loopback relay.
+                        match query_param("control").as_deref().map(crate::control_ws::target) {
+                            Some(Ok(url)) => match crate::control_ws::open(&url, tx.clone(), cc.egui_ctx.clone()) {
+                                Ok(link) => links.push(link),
                                 Err(e) => {
                                     log::error!("{e}");
                                     return Err(e.into());
@@ -171,9 +187,9 @@ mod web {
                                 log::error!("{e}");
                                 return Err(e.into());
                             }
-                            None => (app, None),
-                        };
-                        Ok(Box::new(Shell(app, inbox, host, link)))
+                            None => {}
+                        }
+                        Ok(Box::new(Shell(app, inbox, host, links)))
                     }),
                 )
                 .await;

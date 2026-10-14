@@ -9,6 +9,10 @@
 //!   delivery hook. The parent stores the file and reports failures itself.
 //! - `cadcraft:dirty` (to the parent): `{ dirty }` whenever unsaved changes appear or go away.
 //! - `cadcraft:failed` (to the parent): `{ error }` when the app couldn't start.
+//! - `cadcraft:command` (from the parent): `{ line }`, one JSON-lines control request
+//!   (`{"id", "method", "params"}`, see `crates/ui-egui/src/control.rs`), queued exactly like a
+//!   line from the `?control=` WebSocket. Its reply comes back as `cadcraft:command-reply`
+//!   `{ line }` carrying the same `id`. This is how a page lets an agent edit the drawing.
 //!
 //! Only the parent window on the page's own origin is heard or answered. In host mode the app
 //! starts on the Start tab rather than an empty Drawing1, and the parent guards leaving the page.
@@ -16,6 +20,7 @@
 use std::cell::{Cell, RefCell};
 
 use cadcraft_ui_egui::CadApp;
+use crate::control_link::Link;
 use wasm_bindgen::JsCast as _;
 use wasm_bindgen::JsValue;
 use wasm_bindgen::closure::Closure;
@@ -65,8 +70,9 @@ impl Bridge {
         self.send(&[("type", "cadcraft:failed".into()), ("error", error.into())]);
     }
 
-    /// Hear drawings from the parent; they arrive through the upload inbox.
-    pub fn listen(&self, inbox: crate::upload::Inbox) {
+    /// Hear drawings (`cadcraft:open`) and control requests (`cadcraft:command`) from the
+    /// parent; drawings arrive through the upload inbox, requests through `link`.
+    pub fn listen(&self, inbox: crate::upload::Inbox, link: Link) {
         let parent = self.parent.clone();
         let origin = self.origin.clone();
         let on_message = Closure::<dyn FnMut(web_sys::MessageEvent)>::new(move |event: web_sys::MessageEvent| {
@@ -74,8 +80,15 @@ impl Bridge {
                 return;
             }
             let data = event.data();
-            if string(&data, "type").as_deref() != Some("cadcraft:open") {
-                return;
+            match string(&data, "type").as_deref() {
+                Some("cadcraft:command") => {
+                    if let Some(line) = string(&data, "line") {
+                        link.push_text(&line);
+                    }
+                    return;
+                }
+                Some("cadcraft:open") => {}
+                _ => return,
             }
             let name = string(&data, "name")
                 .filter(|n| !n.trim().is_empty())
@@ -93,6 +106,11 @@ impl Bridge {
             // The listener lives as long as the page.
             on_message.forget();
         }
+    }
+
+    /// A control reply for the parent: `cadcraft:command-reply { line }`.
+    pub fn post_command_reply(&self, reply: &serde_json::Value) {
+        self.send(&[("type", "cadcraft:command-reply".into()), ("line", reply.to_string().into())]);
     }
 
     /// After each frame: tell the parent when unsaved changes appear or go away.

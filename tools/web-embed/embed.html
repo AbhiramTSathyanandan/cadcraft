@@ -10,9 +10,13 @@
   </style>
 </head>
 <body>
-  <iframe id="cad" src="/index.html?host=parent" title="CADCraft"></iframe>
+  <iframe id="cad" title="CADCraft"></iframe>
   <script>
     (function () {
+      // `?control=PORT` (loopback only, see control_target.rs) is passed through to the inner
+      // frame so an agent on the user's machine can drive the embedded editor over the relay.
+      var control = new URLSearchParams(location.search).get('control');
+      document.getElementById('cad').src = '/index.html?host=parent' + (control ? '&control=' + encodeURIComponent(control) : '');
       // Relay between a page on ANOTHER origin that embeds this file and CADCraft's own
       // `?host=parent` postMessage bridge (host.rs), which only trusts a same-origin parent.
       // The inner frame sees this page as its parent on its own origin; this page forwards
