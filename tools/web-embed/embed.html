@@ -22,14 +22,18 @@
       // The inner frame sees this page as its parent on its own origin; this page forwards
       // `cadcraft:*` messages between it and the allow-listed outer parent, re-tagging the
       // target origin each way. No other message type crosses in either direction.
+      // The ERP web app (tenant lift plans) and the staff admin app (consultancy workspace),
+      // on every stage plus local dev servers.
       var ALLOWED = [
-        'http://localhost:3000', 'http://127.0.0.1:3000',
+        'http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost:3002', 'http://localhost:3005',
         'https://erp.craneye.com', 'https://app.craneye.com', 'https://devapp.craneye.com',
-        'https://craneye-erp-app.pages.dev'
+        'https://admin.craneye.com', 'https://devadmin.craneye.com',
+        'https://craneye-erp-app.pages.dev', 'https://craneye-erp-app-dev.pages.dev',
+        'https://craneye-admin.pages.dev', 'https://craneye-admin-dev.pages.dev'
       ];
       function allowed(origin) {
         if (ALLOWED.indexOf(origin) !== -1) return true;
-        return /^https:\/\/[a-z0-9-]+\.craneye-erp-app\.pages\.dev$/.test(origin);
+        return /^https:\/\/[a-z0-9-]+\.craneye-(erp-app|erp-app-dev|admin|admin-dev)\.pages\.dev$/.test(origin);
       }
       var inner = document.getElementById('cad');
       var parentOrigin = null;
